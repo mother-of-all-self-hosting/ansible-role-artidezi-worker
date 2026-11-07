@@ -218,7 +218,6 @@ Approve the printed code in a browser on another machine.
 >[!WARNING]
 > Do not copy `auth.json` between workers: they would share a single-use refresh token, and a rotation by one would log the others out.
 
-
 ### Upgrading and restarting
 
 Upgrade the orchestrator and its workers to the same release.
