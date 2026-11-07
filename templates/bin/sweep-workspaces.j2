@@ -1,0 +1,31 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Runs as root before the worker starts, after its previous container or processes are gone.
+# The worker never resumes an attempt, so any attempt workspace present now is stale:
+# its attempt was interrupted (reboot, crash, stop) or its cleanup failed, for example on root-owned files a task's container wrote.
+# A quarantine marker means the environment is kept as evidence for recovery, so nothing is removed then.
+
+set -eu
+
+workspaces='{{ artidezi_worker_workspaces_path }}'
+
+if [ -e "$workspaces/worker-quarantine.json" ] || [ -L "$workspaces/worker-quarantine.json" ]; then
+	echo "Worker quarantine marker present; keeping all workspaces"
+	exit 0
+fi
+
+# Everything in the workspaces was within reach of the tasks, and this runs as root.
+# `rm` doesn't follow symbolic links, but the shell would, for this one in the glob below.
+if [ -L "$workspaces/inputs" ]; then
+	echo "Removing the symbolic link $workspaces/inputs"
+	rm -f -- "$workspaces/inputs"
+fi
+
+for path in "$workspaces"/att_* "$workspaces"/inputs/att_*; do
+	[ -e "$path" ] || [ -L "$path" ] || continue
+	echo "Removing stale $path"
+	rm -rf --one-file-system -- "$path"
+done

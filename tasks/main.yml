@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+---
+
+- name: Perform ArtiDezi worker installation tasks
+  when: artidezi_worker_enabled | bool
+  tags:
+    - setup-all
+    - setup-artidezi-worker
+    - install-all
+    - install-artidezi-worker
+  block:
+    - name: Validate ArtiDezi worker configuration
+      ansible.builtin.include_tasks: "{{ role_path }}/tasks/validate_config.yml"
+    - name: Install ArtiDezi worker
+      ansible.builtin.include_tasks: "{{ role_path }}/tasks/install.yml"
+
+- name: Perform ArtiDezi worker uninstallation tasks
+  when: not artidezi_worker_enabled | bool
+  tags:
+    - setup-all
+    - setup-artidezi-worker
+  block:
+    - name: Uninstall ArtiDezi worker
+      ansible.builtin.include_tasks: "{{ role_path }}/tasks/uninstall.yml"

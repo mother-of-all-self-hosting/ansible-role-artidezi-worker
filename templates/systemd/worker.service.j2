@@ -1,0 +1,85 @@
+#jinja2: lstrip_blocks: True
+{#
+SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+#}
+[Unit]
+Description=ArtiDezi worker ({{ artidezi_worker_identifier }})
+{% for service in artidezi_worker_systemd_required_services_list %}
+Requires={{ service }}
+After={{ service }}
+{% endfor %}
+{% for service in artidezi_worker_systemd_wanted_services_list %}
+Wants={{ service }}
+After={{ service }}
+{% endfor %}
+{% if artidezi_worker_mode == 'container' %}
+DefaultDependencies=no
+{% endif %}
+
+[Service]
+Type=simple
+{% if artidezi_worker_mode == 'container' %}
+Environment="HOME={{ devture_systemd_docker_base_systemd_unit_home_path }}"
+ExecStartPre={{ devture_systemd_docker_base_host_command_sh }} -c '{{ artidezi_worker_container_cleanup_command | trim | replace("\n", " ") }}'
+{% else %}
+User={{ artidezi_worker_uid }}
+Group={{ artidezi_worker_gid }}
+{% if artidezi_worker_systemd_supplementary_groups | length > 0 %}
+SupplementaryGroups={{ artidezi_worker_systemd_supplementary_groups | join(' ') }}
+{% endif %}
+WorkingDirectory={{ artidezi_worker_home_path }}
+EnvironmentFile={{ artidezi_worker_config_path }}/env
+{% endif %}
+# As root (+): it removes what interrupted attempts left behind, including root-owned files.
+ExecStartPre=+{{ artidezi_worker_bin_path }}/sweep-workspaces
+
+{% if artidezi_worker_mode == 'container' %}
+# --init reaps the orphans that tasks leave behind, and passes SIGTERM on to the worker.
+# Not a sandbox: see docs/configuring-artidezi-worker.md.
+ExecStart={{ devture_systemd_docker_base_host_command_docker }} run \
+      --rm \
+      --name={{ artidezi_worker_identifier }} \
+      --log-driver=none \
+      --init \
+      --user={{ artidezi_worker_uid }}:{{ artidezi_worker_gid }} \
+      --cap-drop=ALL \
+      --security-opt=no-new-privileges \
+      {% if artidezi_worker_container_read_only_enabled | bool %}
+      --read-only \
+      {% endif %}
+      --tmpfs=/tmp:{{ artidezi_worker_container_tmpfs_options }} \
+      --network={{ artidezi_worker_container_network }} \
+      --workdir={{ artidezi_worker_runtime_home_path }} \
+      --env-file={{ artidezi_worker_config_path }}/env \
+      --mount type=bind,src={{ artidezi_worker_config_path }}/passwd,dst=/etc/passwd,ro \
+      --mount type=bind,src={{ artidezi_worker_config_path }}/group,dst=/etc/group,ro \
+      --mount type=bind,src={{ artidezi_worker_config_path }}/worker.yaml,dst={{ artidezi_worker_runtime_config_file_path }},ro \
+      --mount type=bind,src={{ artidezi_worker_secrets_path }}/token,dst={{ artidezi_worker_runtime_token_file_path }},ro \
+      --mount type=bind,src={{ artidezi_worker_home_path }},dst={{ artidezi_worker_runtime_home_path }} \
+      --mount type=bind,src={{ artidezi_worker_workspaces_path }},dst={{ artidezi_worker_runtime_workspaces_path }} \
+      --mount type=bind,src={{ artidezi_worker_credentials_path }},dst={{ artidezi_worker_runtime_credentials_path }} \
+      {% for argument in artidezi_worker_container_extra_arguments %}
+      {{ argument }} \
+      {% endfor %}
+      {{ artidezi_worker_container_image_final }} \
+      worker --config {{ artidezi_worker_runtime_config_file_path }}
+
+ExecStop=-{{ devture_systemd_docker_base_host_command_sh }} -c '{{ devture_systemd_docker_base_host_command_docker }} stop -t {{ artidezi_worker_stop_grace_time_seconds }} {{ artidezi_worker_identifier }} 2>/dev/null || true'
+ExecStop=-{{ devture_systemd_docker_base_host_command_sh }} -c '{{ devture_systemd_docker_base_host_command_docker }} rm {{ artidezi_worker_identifier }} 2>/dev/null || true'
+{% else %}
+ExecStart={{ artidezi_worker_binary_path }} worker --config {{ artidezi_worker_runtime_config_file_path }}
+
+# Tasks run as child processes of the worker, which stops them on SIGTERM: they only get killed if it doesn't.
+KillMode=mixed
+{% endif %}
+# Before the start, a stale container may take the whole stop grace time, and the sweep may have a lot to delete.
+TimeoutStartSec={{ artidezi_worker_stop_grace_time_seconds | int + 300 }}
+TimeoutStopSec={{ artidezi_worker_stop_grace_time_seconds | int + 30 }}
+Restart=always
+RestartSec=30
+SyslogIdentifier={{ artidezi_worker_identifier }}
+
+[Install]
+WantedBy=multi-user.target

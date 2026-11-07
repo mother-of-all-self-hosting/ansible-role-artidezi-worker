@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+---
+- name: Prepare the host like the default scenario
+  ansible.builtin.import_playbook: ../default/prepare.yml
+
+- name: Prepare what the role leaves to the host in host mode
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Ensure the worker's group exists
+      ansible.builtin.group:
+        name: artidezi-worker
+        gid: 1235
+
+    - name: Ensure the worker's user exists
+      ansible.builtin.user:
+        name: artidezi-worker
+        uid: 1234
+        group: artidezi-worker
+        create_home: false
+
+    - name: Ensure a stand-in for Codex exists
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo 'codex-cli 0.0.0'
+        dest: /usr/local/bin/codex
+        mode: '0755'

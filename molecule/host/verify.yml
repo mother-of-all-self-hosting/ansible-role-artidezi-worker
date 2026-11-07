@@ -1,0 +1,136 @@
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+---
+# What this suite is guarding against
+#
+# In host mode, nothing confines the worker but its user: it must run as that user, from a binary that user can't replace, and without a container around it.
+
+- name: Verify the ArtiDezi worker in host mode
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Verify that the worker works
+      block:
+        - name: Load the role's defaults
+          ansible.builtin.include_vars:
+            file: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}/defaults/main.yml"
+            name: artidezi_worker_molecule_defaults
+
+        - name: Read the extracted binary's version
+          ansible.builtin.command:
+            cmd: /artidezi-worker/bin/artidezi --version
+          register: artidezi_worker_molecule_version
+          changed_when: false
+
+        - name: Check the binary
+          ansible.builtin.stat:
+            path: /artidezi-worker/bin/artidezi
+          register: artidezi_worker_molecule_binary
+
+        - name: Read the worker's process
+          ansible.builtin.command:
+            cmd: ps -C artidezi -o uid=,gid=,supgrp=,args=
+          register: artidezi_worker_molecule_process
+          changed_when: false
+
+        - name: List containers
+          ansible.builtin.command:
+            cmd: docker ps --all --quiet
+          register: artidezi_worker_molecule_containers
+          changed_when: false
+
+        - name: Check the customized container source path
+          ansible.builtin.stat:
+            path: /artidezi-worker/customized-container-src
+          register: artidezi_worker_molecule_customized_src
+
+        - name: Assert how the worker runs
+          ansible.builtin.assert:
+            that:
+              - artidezi_worker_molecule_version.stdout == 'artidezi ' ~ (artidezi_worker_molecule_defaults.artidezi_worker_version | regex_replace('^v', ''))
+              - artidezi_worker_molecule_binary.stat.pw_name == 'root'
+              - artidezi_worker_molecule_binary.stat.mode == '0755'
+              - artidezi_worker_molecule_process.stdout is match('^\s*1234\s+1235\s+\S*docker')
+              - artidezi_worker_molecule_process.stdout is search('/artidezi-worker/bin/artidezi worker --config /artidezi-worker/config/worker.yaml')
+              - artidezi_worker_molecule_containers.stdout | length == 0
+              - not artidezi_worker_molecule_customized_src.stat.exists
+            success_msg: "{{ artidezi_worker_molecule_process.stdout }}"
+
+        - name: Sample the worker's restart counter
+          ansible.builtin.systemd_service:
+            name: artidezi-worker.service
+          register: artidezi_worker_molecule_restarts_before
+
+        # Comfortably longer than the unit's `RestartSec=30`, so a crash loop has to tick at least once inside the window.
+        - name: Watch the worker for 45 seconds
+          ansible.builtin.pause:
+            seconds: 45
+
+        - name: Sample the worker's restart counter again
+          ansible.builtin.systemd_service:
+            name: artidezi-worker.service
+          register: artidezi_worker_molecule_restarts_after
+
+        - name: Leave what an interrupted attempt leaves behind, with root-owned files
+          ansible.builtin.file:
+            path: /artidezi-worker/data/workspaces/att_stale/root-owned
+            state: directory
+            owner: root
+            mode: '0700'
+
+        - name: Stop the worker
+          ansible.builtin.systemd_service:
+            name: artidezi-worker.service
+            state: stopped
+
+        - name: Read the worker's log
+          ansible.builtin.command:
+            cmd: journalctl --no-pager --output=cat --unit=artidezi-worker.service
+          register: artidezi_worker_molecule_log
+          changed_when: false
+
+        - name: Sample the stopped worker
+          ansible.builtin.systemd_service:
+            name: artidezi-worker.service
+          register: artidezi_worker_molecule_stopped
+
+        - name: Assert that the worker kept retrying, and stopped on SIGTERM
+          ansible.builtin.assert:
+            that:
+              - artidezi_worker_molecule_restarts_after.status.NRestarts == artidezi_worker_molecule_restarts_before.status.NRestarts
+              - artidezi_worker_molecule_log.stdout_lines | select('search', 'worker iteration failed') | list | length >= 10
+              - artidezi_worker_molecule_log.stdout_lines | select('search', 'worker stopped') | list | length == 1
+              - artidezi_worker_molecule_stopped.status.Result == 'success'
+
+        - name: Start the worker
+          ansible.builtin.systemd_service:
+            name: artidezi-worker.service
+            state: started
+
+        - name: Check the stale attempt
+          ansible.builtin.stat:
+            path: /artidezi-worker/data/workspaces/att_stale
+          register: artidezi_worker_molecule_stale
+
+        - name: Assert that the sweep removed the stale attempt
+          ansible.builtin.assert:
+            that: not artidezi_worker_molecule_stale.stat.exists
+
+      rescue:
+        - name: Retrieve the worker's log
+          ansible.builtin.command:
+            cmd: journalctl --no-pager --output=cat --unit=artidezi-worker.service
+          register: artidezi_worker_molecule_service_log
+          changed_when: false
+
+        - name: Show the worker's log
+          ansible.builtin.debug:
+            var: artidezi_worker_molecule_service_log.stdout_lines
+
+        - name: Fail because verification did not pass
+          ansible.builtin.fail:
+            msg: "ArtiDezi worker verification failed. The log is printed above."

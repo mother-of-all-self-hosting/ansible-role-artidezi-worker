@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+---
+
+- name: Fail if required ArtiDezi worker settings are not defined
+  ansible.builtin.fail:
+    msg: "You need to define a required configuration setting (`{{ item }}`)."
+  when: "lookup('vars', item, default='') | string | length == 0"
+  with_items:
+    - artidezi_worker_identifier
+    - artidezi_worker_uid
+    - artidezi_worker_gid
+    - artidezi_worker_container_image
+    - artidezi_worker_orchestrator_url
+    - artidezi_worker_token
+    - artidezi_worker_pool
+    - artidezi_worker_id
+
+- name: Fail if artidezi_worker_mode is invalid
+  ansible.builtin.fail:
+    msg: "artidezi_worker_mode must be `container` or `host`, not `{{ artidezi_worker_mode }}`."
+  when: artidezi_worker_mode not in ['container', 'host']
+
+- name: Fail if the ArtiDezi worker offers no harness
+  ansible.builtin.fail:
+    msg: "A worker needs a harness: enable `artidezi_worker_codex_enabled` or `artidezi_worker_pi_enabled` (or set `artidezi_worker_codex_binary` or `artidezi_worker_pi_binary`)."
+  when: artidezi_worker_codex_binary | length == 0 and artidezi_worker_pi_binary | length == 0
+
+- name: Fail if artidezi_worker_orchestrator_url is not HTTPS
+  ansible.builtin.fail:
+    msg: "artidezi_worker_orchestrator_url must start with `https://`: the worker sends its token there (`artidezi_worker_allow_insecure_orchestrator_url` overrides this)."
+  when: artidezi_worker_orchestrator_url is not match('^https://.') and not artidezi_worker_allow_insecure_orchestrator_url | bool
+
+# ArtiDezi checks these only when the worker starts, or when the orchestrator refuses it.
+- name: Fail if an ArtiDezi worker name is invalid
+  ansible.builtin.fail:
+    msg: "`{{ item }}` is not a plain name: it may contain letters, digits, `-`, `_` and `.`, must not start with a dot, and has at most 128 characters."
+  when: item is not match('^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$')
+  loop: "{{ [artidezi_worker_pool, artidezi_worker_id] + artidezi_worker_tags }}"
+
+- name: Fail if artidezi_worker_poll_seconds is invalid
+  ansible.builtin.fail:
+    msg: "artidezi_worker_poll_seconds must be a positive integer."
+  when: artidezi_worker_poll_seconds | string is not match('^[1-9][0-9]*$')
+
+- name: Fail if artidezi_worker_stop_grace_time_seconds is invalid
+  ansible.builtin.fail:
+    msg: "artidezi_worker_stop_grace_time_seconds must be a positive integer."
+  when: artidezi_worker_stop_grace_time_seconds | string is not match('^[1-9][0-9]*$')
+
+- name: Validate what the customized image installs
+  when: artidezi_worker_mode == 'container'
+  block:
+    - name: Fail if Pi's Node.js is too old
+      ansible.builtin.fail:
+        msg: "Pi needs Node.js 22.19 or newer, not `{{ artidezi_worker_pi_node_version }}` (`artidezi_worker_pi_node_version`)."
+      when: artidezi_worker_pi_enabled | bool and artidezi_worker_pi_node_version is version('22.19', '<')
+
+    # They end up in a shell command in the Dockerfile.
+    - name: Fail if an entry of artidezi_worker_mise_packages is invalid
+      ansible.builtin.fail:
+        msg: "`{{ item }}` is not a mise tool (`tool` or `tool@version`)."
+      when: item is not match('^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$')
+      loop: "{{ artidezi_worker_mise_packages if artidezi_worker_mise_enabled | bool else [] }}"
+
+    - name: Fail if an entry of artidezi_worker_container_image_customizations_packages_to_install is invalid
+      ansible.builtin.fail:
+        msg: "`{{ item }}` is not an apt package name."
+      when: item is not match('^[A-Za-z0-9][A-Za-z0-9.+:=~-]*$')
+      loop: "{{ artidezi_worker_container_image_customizations_packages_to_install }}"

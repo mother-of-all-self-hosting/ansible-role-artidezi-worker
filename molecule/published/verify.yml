@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+---
+# With nothing to customize, the published image runs as is, and nothing gets built.
+
+- name: Verify the ArtiDezi worker on the published image
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Load the role's defaults
+      ansible.builtin.include_vars:
+        file: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}/defaults/main.yml"
+        name: artidezi_worker_molecule_defaults
+
+    - name: Read the image of the container
+      ansible.builtin.command:
+        cmd: docker inspect --format '{{ '{{' }} .Config.Image {{ '}}' }}' artidezi-worker
+      register: artidezi_worker_molecule_image
+      changed_when: false
+
+    - name: List local images
+      ansible.builtin.command:
+        cmd: docker image ls --format '{{ '{{' }} .Repository {{ '}}' }}'
+      register: artidezi_worker_molecule_images
+      changed_when: false
+
+    - name: Check the customized container source path
+      ansible.builtin.stat:
+        path: /artidezi-worker/customized-container-src
+      register: artidezi_worker_molecule_customized_src
+
+    - name: Read the worker's user, inside the container
+      ansible.builtin.command:
+        cmd: docker exec artidezi-worker id -un
+      register: artidezi_worker_molecule_user
+      changed_when: false
+
+    - name: Assert that the published image runs as is
+      ansible.builtin.assert:
+        that:
+          - artidezi_worker_molecule_image.stdout == 'ghcr.io/devture/artidezi:' ~ artidezi_worker_molecule_defaults.artidezi_worker_version
+          - "'localhost/artidezi-worker' not in artidezi_worker_molecule_images.stdout"
+          - not artidezi_worker_molecule_customized_src.stat.exists
+          - artidezi_worker_molecule_user.stdout == 'artidezi-worker'

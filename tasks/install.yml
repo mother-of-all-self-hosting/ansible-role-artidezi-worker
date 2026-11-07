@@ -1,0 +1,260 @@
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+---
+
+# Whoever can write to a directory above artidezi_worker_base_path could rename it (even though it is root-owned) and put another one in its place,
+# with a workspace sweep script that systemd then runs as root.
+# Symlinks on the way (e.g. /mash -> /mnt/storage/mash) are followed: the directories of both paths are checked.
+- name: Resolve artidezi_worker_base_path
+  ansible.builtin.command:
+    argv: [realpath, --canonicalize-missing, "{{ artidezi_worker_base_path }}"]
+  changed_when: false
+  check_mode: false
+  register: artidezi_worker_base_path_resolved
+
+- name: Check the directories above artidezi_worker_base_path
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop: |-
+    {% set ns = namespace(paths=[]) %}
+    {% for path in [artidezi_worker_base_path, artidezi_worker_base_path_resolved.stdout] %}
+    {% set parts = path.strip('/').split('/') %}
+    {% for i in range(0, parts | length) %}{% set ns.paths = ns.paths + ['/' + (parts[:i] | join('/'))] %}{% endfor %}
+    {% endfor %}
+    {{ ns.paths | unique }}
+  register: artidezi_worker_base_path_parents
+
+- name: Fail if a directory above artidezi_worker_base_path is writable by anyone but root
+  ansible.builtin.fail:
+    msg: >-
+      {{ item.stat.path }} must be owned by root and writable only by root (it is owned by uid {{ item.stat.uid }}, mode {{ item.stat.mode }}):
+      whoever can write there could replace {{ artidezi_worker_base_path }}, and with it the script that runs as root before the worker starts.
+  loop: "{{ artidezi_worker_base_path_parents.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  # A symlink's own mode means nothing; the directory holding it is checked, and so is its target's path.
+  # The group and others digits of the mode: 2, 3, 6 and 7 include write access.
+  when: item.stat.exists and not item.stat.islnk and (item.stat.uid != 0 or item.stat.mode[-2:] is search('[2367]'))
+
+# systemd refuses to start a service for an unknown user, even by uid. In a container, the role provides the user.
+- name: Fail if the ArtiDezi worker's user doesn't exist on the host
+  when: artidezi_worker_mode == 'host'
+  ansible.builtin.command:
+    argv: [getent, passwd, "{{ artidezi_worker_uid }}"]
+  changed_when: false
+  check_mode: false
+
+- name: Ensure ArtiDezi worker paths exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+  loop:
+    - {path: "{{ artidezi_worker_base_path }}", mode: '0750', owner: root, group: "{{ artidezi_worker_gid }}"}
+    - {path: "{{ artidezi_worker_bin_path }}", mode: '0750', owner: root, group: "{{ artidezi_worker_gid }}"}
+    - {path: "{{ artidezi_worker_config_path }}", mode: '0750', owner: root, group: "{{ artidezi_worker_gid }}"}
+    - {path: "{{ artidezi_worker_secrets_path }}", mode: '0750', owner: root, group: "{{ artidezi_worker_gid }}"}
+    # Root-owned, so that the worker can't replace the directories below it: the sweep removes things in them as root.
+    - {path: "{{ artidezi_worker_data_path }}", mode: '0750', owner: root, group: "{{ artidezi_worker_gid }}"}
+    - {path: "{{ artidezi_worker_home_path }}", mode: '0700', owner: "{{ artidezi_worker_uid }}", group: "{{ artidezi_worker_gid }}"}
+    - {path: "{{ artidezi_worker_workspaces_path }}", mode: '0750', owner: "{{ artidezi_worker_uid }}", group: "{{ artidezi_worker_gid }}"}
+    - {path: "{{ artidezi_worker_credentials_path }}", mode: '0700', owner: "{{ artidezi_worker_uid }}", group: "{{ artidezi_worker_gid }}"}
+
+- name: Ensure the ArtiDezi worker container image is pulled via community.docker.docker_image_pull
+  when: devture_systemd_docker_base_container_image_pull_method == 'ansible-module'
+  community.docker.docker_image_pull:
+    name: "{{ artidezi_worker_container_image }}"
+    pull: always
+  register: artidezi_worker_container_image_pull_result_ansible_module
+  retries: "{{ devture_playbook_help_container_retries_count }}"
+  delay: "{{ devture_playbook_help_container_retries_delay }}"
+  until: artidezi_worker_container_image_pull_result_ansible_module is not failed
+
+- name: Ensure the ArtiDezi worker container image is pulled via ansible.builtin.command
+  when: devture_systemd_docker_base_container_image_pull_method == 'command'
+  ansible.builtin.command:
+    cmd: "{{ devture_systemd_docker_base_host_command_docker }} pull {{ artidezi_worker_container_image }}"
+  register: artidezi_worker_container_image_pull_result_command
+  retries: "{{ devture_playbook_help_container_retries_count }}"
+  delay: "{{ devture_playbook_help_container_retries_delay }}"
+  until: artidezi_worker_container_image_pull_result_command is not failed
+  changed_when: "'Downloaded newer image' in artidezi_worker_container_image_pull_result_command.stdout"
+
+- name: Determine whether the published ArtiDezi worker image changed
+  ansible.builtin.set_fact:
+    artidezi_worker_container_image_pulled: >-
+      {{
+        artidezi_worker_container_image_pull_result_ansible_module.changed | default(false)
+        or artidezi_worker_container_image_pull_result_command.changed | default(false)
+      }}
+
+- name: Ensure the customized ArtiDezi worker container image is built
+  when: artidezi_worker_container_image_customizations_enabled | bool
+  block:
+    - name: Ensure the customized container source path exists
+      ansible.builtin.file:
+        path: "{{ artidezi_worker_customized_container_src_path }}"
+        state: directory
+        mode: '0750'
+        owner: root
+        group: root
+
+    - name: Ensure the customizations Dockerfile is created
+      ansible.builtin.template:
+        src: "{{ role_path }}/templates/customizations/Dockerfile.j2"
+        dest: "{{ artidezi_worker_customized_container_src_path }}/Dockerfile"
+        owner: root
+        group: root
+        mode: '0640'
+      register: artidezi_worker_container_image_customizations_dockerfile_result
+
+    - name: Build the customized image
+      block:
+        - name: Ensure the customized container image is built
+          community.docker.docker_image_build:
+            name: "{{ artidezi_worker_container_image_customized }}"
+            dockerfile: Dockerfile
+            path: "{{ artidezi_worker_customized_container_src_path }}"
+            pull: true
+            rebuild: "{{ 'always' if artidezi_worker_container_image_customizations_dockerfile_result.changed | bool or artidezi_worker_container_image_pulled | bool else 'never' }}"
+          register: artidezi_worker_container_image_build_result
+
+      rescue:
+        # The Dockerfile is what tells the next run to rebuild: if it stayed, that run would see no change and keep the previous image.
+        - name: Ensure the customizations Dockerfile of a failed build doesn't remain
+          ansible.builtin.file:
+            path: "{{ artidezi_worker_customized_container_src_path }}/Dockerfile"
+            state: absent
+
+        - name: Fail because the customized image did not build
+          ansible.builtin.fail:
+            msg: "Building {{ artidezi_worker_container_image_customized }} failed: {{ ansible_failed_result.msg | default('see the task above') }}"
+
+- name: Ensure the customized container source path doesn't exist, when not customizing
+  when: not artidezi_worker_container_image_customizations_enabled | bool
+  ansible.builtin.file:
+    path: "{{ artidezi_worker_customized_container_src_path }}"
+    state: absent
+
+- name: Ensure ArtiDezi worker helper scripts are installed
+  ansible.builtin.template:
+    src: "{{ role_path }}/templates/bin/{{ item }}.j2"
+    dest: "{{ artidezi_worker_bin_path }}/{{ item }}"
+    mode: '0750'
+    owner: root
+    group: root
+  loop: "{{ ['sweep-workspaces'] + (['extract-binary'] if artidezi_worker_mode == 'host' else []) }}"
+
+- name: Ensure the ArtiDezi worker binary is extracted from the image
+  when: artidezi_worker_mode == 'host' and not ansible_check_mode
+  ansible.builtin.command:
+    argv: ["{{ artidezi_worker_bin_path }}/extract-binary"]
+  register: artidezi_worker_binary_extraction_result
+  changed_when: artidezi_worker_binary_extraction_result.stdout | length > 0
+
+# The directories above the base path may be closed to this user, as the MASH playbook's base directory is.
+- name: Check that the ArtiDezi worker's user can run the binary
+  when: artidezi_worker_mode == 'host' and not ansible_check_mode
+  ansible.builtin.command:
+    argv:
+      - setpriv
+      - "--reuid={{ artidezi_worker_uid }}"
+      - "--regid={{ artidezi_worker_gid }}"
+      - --init-groups
+      - "{{ artidezi_worker_binary_path }}"
+      - --version
+  register: artidezi_worker_binary_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if the ArtiDezi worker's user can't run the binary
+  ansible.builtin.fail:
+    msg: "uid {{ artidezi_worker_uid }} can't run {{ artidezi_worker_binary_path }}, so the worker wouldn't start. Put `artidezi_worker_base_path` somewhere this user can reach: {{ artidezi_worker_binary_check.stderr }}"
+  when: artidezi_worker_mode == 'host' and not ansible_check_mode and artidezi_worker_binary_check.rc != 0
+
+- name: Ensure what only host mode uses doesn't exist, when in container mode
+  when: artidezi_worker_mode == 'container'
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ artidezi_worker_binary_path }}"
+    - "{{ artidezi_worker_binary_path }}.image-id"
+    - "{{ artidezi_worker_bin_path }}/extract-binary"
+
+- name: Ensure the ArtiDezi worker token is installed
+  ansible.builtin.copy:
+    content: "{{ artidezi_worker_token }}\n"
+    dest: "{{ artidezi_worker_secrets_path }}/token"
+    mode: '0440'
+    owner: root
+    group: "{{ artidezi_worker_gid }}"
+  register: artidezi_worker_token_result
+  no_log: true
+  diff: false
+
+- name: Ensure ArtiDezi worker configuration is installed
+  ansible.builtin.template:
+    src: "{{ role_path }}/templates/{{ item.src }}.j2"
+    dest: "{{ artidezi_worker_config_path }}/{{ item.src }}"
+    mode: "{{ item.mode }}"
+    owner: root
+    group: "{{ artidezi_worker_gid }}"
+  loop:
+    - {src: worker.yaml, mode: '0440'}
+    - {src: env, mode: '0440'}
+    # So that the worker's user has a name, whatever its uid: without one, `ssh`, `whoami` and Node.js's `os.userInfo()` fail.
+    - {src: passwd, mode: '0444'}
+    - {src: group, mode: '0444'}
+  loop_control:
+    label: "{{ item.src }}"
+  register: artidezi_worker_config_result
+
+- name: Ensure the ArtiDezi worker container network is created via community.docker.docker_network
+  when: artidezi_worker_mode == 'container' and devture_systemd_docker_base_container_network_creation_method == 'ansible-module'
+  community.docker.docker_network:
+    enable_ipv6: "{{ devture_systemd_docker_base_ipv6_enabled }}"
+    name: "{{ artidezi_worker_container_network }}"
+    driver: bridge
+    driver_options: "{{ devture_systemd_docker_base_container_networks_driver_options }}"
+
+- name: Ensure the ArtiDezi worker container network is created via ansible.builtin.command
+  when: artidezi_worker_mode == 'container' and devture_systemd_docker_base_container_network_creation_method == 'command'
+  ansible.builtin.command:
+    cmd: >-
+      {{ devture_systemd_docker_base_host_command_docker }} network create
+      {% if devture_systemd_docker_base_ipv6_enabled %}--ipv6{% endif %}
+      {{ devture_systemd_docker_base_container_networks_driver_options_string }}
+      {{ artidezi_worker_container_network }}
+  register: artidezi_worker_network_creation_result
+  changed_when: artidezi_worker_network_creation_result.rc == 0
+  failed_when: artidezi_worker_network_creation_result.rc != 0 and 'already exists' not in artidezi_worker_network_creation_result.stderr
+
+- name: Ensure the ArtiDezi worker systemd service is installed
+  ansible.builtin.template:
+    src: "{{ role_path }}/templates/systemd/worker.service.j2"
+    dest: "{{ devture_systemd_docker_base_systemd_path }}/{{ artidezi_worker_identifier }}.service"
+    mode: '0644'
+  register: artidezi_worker_systemd_service_result
+
+- name: Ensure systemd is reloaded  # noqa no-handler
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: artidezi_worker_systemd_service_result is changed
+
+- name: Determine whether the ArtiDezi worker needs a restart
+  ansible.builtin.set_fact:
+    artidezi_worker_restart_necessary: >-
+      {{
+        artidezi_worker_container_image_pulled | bool
+        or artidezi_worker_container_image_build_result.changed | default(false)
+        or artidezi_worker_binary_extraction_result.changed | default(false)
+        or artidezi_worker_token_result is changed
+        or artidezi_worker_config_result is changed
+        or artidezi_worker_systemd_service_result is changed
+      }}

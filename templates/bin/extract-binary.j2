@@ -1,0 +1,31 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Installs the static binary of the published image at the binary path, and says so.
+# A file next to it records the image it came from, so that nothing happens (and nothing gets printed) when that is still the same.
+# The swap is a rename: a running worker keeps its binary until it restarts.
+
+set -eu
+
+docker='{{ devture_systemd_docker_base_host_command_docker }}'
+image='{{ artidezi_worker_container_image }}'
+target='{{ artidezi_worker_binary_path }}'
+marker="$target.image-id"
+
+image_id="$($docker image inspect --format '{{ '{{' }} .Id {{ '}}' }}' "$image")"
+
+if [ -x "$target" ] && [ -f "$marker" ] && [ "$(cat "$marker")" = "$image_id" ]; then
+	exit 0
+fi
+
+container="$($docker create "$image")"
+trap '$docker rm --force "$container" >/dev/null; rm -f "$target.new"' EXIT
+
+$docker cp --quiet "$container:/usr/local/bin/artidezi" "$target.new"
+chown root:root "$target.new"
+chmod 0755 "$target.new"
+"$target.new" --version
+mv -f "$target.new" "$target"
+printf '%s\n' "$image_id" > "$marker"

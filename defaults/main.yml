@@ -1,0 +1,262 @@
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+---
+# Project source code URL: https://github.com/devture/artidezi
+#
+# An ArtiDezi worker polls its orchestrator over HTTPS and runs a coding-agent harness (Codex or Pi) on repository checkouts.
+# It only makes outgoing connections.
+# It is untrusted and it is not a sandbox: tasks run one after another in the same environment, and each can read the worker's token and model credentials.
+# See docs/configuring-artidezi-worker.md.
+
+artidezi_worker_enabled: true
+
+artidezi_worker_identifier: artidezi-worker
+
+# How the worker runs, both from the same published image:
+#
+# - `container`: in a hardened container. Harnesses and tooling come from a customized image (see below).
+# - `host`: the image's static binary is extracted to `artidezi_worker_binary_path` and runs under systemd as `artidezi_worker_uid`, with the host's tools.
+#   An escape hatch for workers that need more privilege, such as projects needing Docker. The role installs no harness or tooling on the host.
+artidezi_worker_mode: container
+
+# Root runs a script from here before each start (see templates/bin/sweep-workspaces.j2).
+# So the role makes everything here root-owned (except the data directories below),
+# and refuses to install when a directory above it is writable by anyone but root:
+# whoever can write there could put another directory in its place.
+artidezi_worker_base_path: "/{{ artidezi_worker_identifier }}"
+artidezi_worker_bin_path: "{{ artidezi_worker_base_path }}/bin"
+artidezi_worker_config_path: "{{ artidezi_worker_base_path }}/config"
+artidezi_worker_secrets_path: "{{ artidezi_worker_base_path }}/secrets"
+artidezi_worker_customized_container_src_path: "{{ artidezi_worker_base_path }}/customized-container-src"
+
+# Used in `host` mode.
+artidezi_worker_binary_path: "{{ artidezi_worker_bin_path }}/artidezi"
+
+# The directories below are writable by the worker, and so by every task it runs.
+artidezi_worker_data_path: "{{ artidezi_worker_base_path }}/data"
+artidezi_worker_home_path: "{{ artidezi_worker_data_path }}/home"
+artidezi_worker_workspaces_path: "{{ artidezi_worker_data_path }}/workspaces"
+artidezi_worker_credentials_path: "{{ artidezi_worker_data_path }}/credentials"
+
+# The worker runs as this user.
+# In `container` mode, it does not need to exist on the host or in the image (the role provides `/etc/passwd` and `/etc/group`).
+# In `host` mode, it has to exist on the host.
+artidezi_worker_uid: ""
+artidezi_worker_gid: ""
+
+# ArtiDezi is released as CalVer (`vYYYY.MM.DD.N`, the image tag), which is not semver: `versioning=loose` compares all 4 parts.
+# Use the same release as the orchestrator.
+# The role's own tags are `v<artidezi_worker_version>-<release>` (see bin/compute-next-tag.sh).
+# renovate: datasource=docker depName=ghcr.io/devture/artidezi versioning=loose
+artidezi_worker_version: v2026.11.07.3
+
+# The published image. It bundles no harness.
+artidezi_worker_container_image: "{{ artidezi_worker_container_image_registry_prefix }}devture/artidezi:{{ artidezi_worker_container_image_tag }}"
+artidezi_worker_container_image_tag: "{{ artidezi_worker_version }}"
+artidezi_worker_container_image_registry_prefix: "{{ artidezi_worker_container_image_registry_prefix_upstream }}"
+artidezi_worker_container_image_registry_prefix_upstream: "{{ artidezi_worker_container_image_registry_prefix_upstream_default }}"
+artidezi_worker_container_image_registry_prefix_upstream_default: ghcr.io/
+
+# The harnesses this worker offers. A worker needs at least 1.
+#
+# In `container` mode, enabling a harness installs it into the customized image.
+# In `host` mode, it only makes the worker use the harness from the host's PATH: install it yourself.
+#
+# Without either, point `artidezi_worker_codex_binary` or `artidezi_worker_pi_binary` at a harness you provide.
+artidezi_worker_codex_enabled: false
+artidezi_worker_pi_enabled: false
+
+# Names or paths of the harnesses. Empty means not offered.
+artidezi_worker_codex_binary: "{{ ('/usr/local/bin/codex' if artidezi_worker_mode == 'container' else 'codex') if artidezi_worker_codex_enabled | bool else '' }}"
+artidezi_worker_pi_binary: "{{ ('/usr/local/bin/pi' if artidezi_worker_mode == 'container' else 'pi') if artidezi_worker_pi_enabled | bool else '' }}"
+
+# Codex comes from its "package" release archive: the plain binary lacks `codex-code-mode-host`, without which the agent has no execution tool.
+# Its Git tags (`rust-v...`) can't be read by the Renovate regex in our shared preset, while its npm package carries the same versions.
+# renovate: datasource=npm depName=@openai/codex versioning=semver
+artidezi_worker_codex_version: 0.167.0
+artidezi_worker_codex_archive_url: "https://github.com/openai/codex/releases/download/rust-v{{ artidezi_worker_codex_version }}/codex-package-{{ ansible_facts['architecture'] }}-unknown-linux-musl.tar.gz"
+
+# renovate: datasource=npm depName=@earendil-works/pi-coding-agent versioning=semver
+artidezi_worker_pi_version: 1.5.0
+artidezi_worker_pi_package: "@earendil-works/pi-coding-agent"
+
+# Pi needs Node.js 22.19+. It gets its own copy from the official image, under /opt/pi and off PATH:
+# neither the Node.js that a project uses, nor its absence, can affect Pi, and Pi's Node.js does not end up in the projects' way.
+# renovate: datasource=docker depName=docker.io/library/node versioning=node
+artidezi_worker_pi_node_version: 24.22.2
+artidezi_worker_pi_node_container_image: "{{ artidezi_worker_pi_node_container_image_registry_prefix }}node:{{ artidezi_worker_pi_node_version }}-trixie-slim"
+artidezi_worker_pi_node_container_image_registry_prefix: docker.io/
+
+# Pi's `find` and `grep` tools need these, and ArtiDezi runs Pi offline, so it cannot download them on its own.
+artidezi_worker_pi_packages: [fd-find, ripgrep]
+
+# Installs mise into the customized image (`container` mode only).
+# Tasks can use it for what a project pins in its own mise configuration:
+# those tools land in the attempt's home directory, and repositories under the workspaces are trusted by mise.
+artidezi_worker_mise_enabled: false
+
+# renovate: datasource=docker depName=docker.io/jdxcode/mise versioning=loose
+artidezi_worker_mise_version: 2026.11.3
+artidezi_worker_mise_container_image: "{{ artidezi_worker_mise_container_image_registry_prefix }}jdxcode/mise:{{ artidezi_worker_mise_version }}"
+artidezi_worker_mise_container_image_registry_prefix: docker.io/
+
+# renovate: datasource=github-releases depName=casey/just versioning=semver
+artidezi_worker_just_version: 1.59.0
+
+# Tools that mise installs into the image, available to every task, as `tool@version`.
+# The version is optional: without it, each image build takes the latest one, and an image is only built when its Dockerfile changes.
+#
+# The worker clears the environment and points HOME to a new directory for every attempt, so mise's shims would find nothing:
+# instead, the executables of these tools get linked into /usr/local/bin. They are the same for every directory, whatever a repository's mise configuration says.
+artidezi_worker_mise_packages: ["just@{{ artidezi_worker_just_version }}"]
+
+# Controls whether a customized image gets built on the host, `FROM` the published image.
+# It is, when there is something to customize. Otherwise, the published image is used as is.
+# It is never built in `host` mode.
+#
+# See:
+# - templates/customizations/Dockerfile.j2
+# - `artidezi_worker_container_image_customizations_dockerfile_body_custom`
+# - `artidezi_worker_container_image_customized`
+# - `artidezi_worker_container_image_final`
+artidezi_worker_container_image_customizations_enabled: |
+  {{
+    artidezi_worker_mode == 'container'
+    and (
+      artidezi_worker_codex_enabled | bool
+      or artidezi_worker_pi_enabled | bool
+      or artidezi_worker_mise_enabled | bool
+      or artidezi_worker_container_image_customizations_packages_to_install | length > 0
+      or artidezi_worker_container_image_customizations_dockerfile_body_custom | length > 0
+    )
+  }}
+
+# A list of apt packages to install in the customized image.
+# To add your own, use `artidezi_worker_container_image_customizations_packages_to_install_custom`.
+artidezi_worker_container_image_customizations_packages_to_install: "{{ (artidezi_worker_container_image_customizations_packages_to_install_auto + artidezi_worker_container_image_customizations_packages_to_install_custom) | unique }}"
+artidezi_worker_container_image_customizations_packages_to_install_auto: "{{ artidezi_worker_pi_packages if artidezi_worker_pi_enabled | bool else [] }}"
+artidezi_worker_container_image_customizations_packages_to_install_custom: []
+
+# Your own Dockerfile steps, for everything else. They run as root, after the role's own steps.
+# They end up in a file on the host and in the image's history: keep secrets out of them.
+#
+# Example:
+# artidezi_worker_container_image_customizations_dockerfile_body_custom: |
+#   RUN echo 'This is a custom step for building the customized worker image.'
+artidezi_worker_container_image_customizations_dockerfile_body_custom: ""
+
+# The name of the locally built image. It carries the identifier, so that several workers on a host don't overwrite each other's.
+artidezi_worker_container_image_customized: "localhost/{{ artidezi_worker_identifier }}:{{ artidezi_worker_container_image_tag }}-customized"
+
+# The image to run.
+artidezi_worker_container_image_final: "{{ artidezi_worker_container_image_customized if artidezi_worker_container_image_customizations_enabled | bool else artidezi_worker_container_image }}"
+
+# The paths the worker's container sees.
+artidezi_worker_container_config_path: /etc/artidezi-worker
+artidezi_worker_container_data_path: /var/lib/artidezi-worker
+
+# The worker's own network, so that it doesn't share one with other containers. It is created by the role.
+artidezi_worker_container_network: "{{ artidezi_worker_identifier }}"
+
+# Controls if the container network is deleted on uninstalling.
+artidezi_worker_container_network_deletion_enabled: true
+
+# Runs the container with a read-only root filesystem. The home, the workspaces, the credentials and /tmp remain writable.
+artidezi_worker_container_read_only_enabled: true
+
+# The mount options of the tmpfs on /tmp, which needs `exec`: test suites and build tools run things from there.
+# It counts against the container's memory, so it can't be left unbounded.
+artidezi_worker_container_tmpfs_options: "rw,nosuid,nodev,exec,size=2g"
+
+# Additional arguments for `docker run`, e.g. `--memory=8g` or `--pids-limit=4096`.
+artidezi_worker_container_extra_arguments: "{{ artidezi_worker_container_extra_arguments_auto + artidezi_worker_container_extra_arguments_custom }}"
+artidezi_worker_container_extra_arguments_auto: []
+artidezi_worker_container_extra_arguments_custom: []
+
+# Additional groups for the worker's user in `host` mode, e.g. `[docker]`.
+# Membership of the `docker` group gives every task root on the host.
+artidezi_worker_systemd_supplementary_groups: []
+
+# Additional environment variables for the worker, as `KEY=value` lines.
+# Note that the worker passes only PATH on to the harness and the project's commands.
+artidezi_worker_environment_variables_additional_variables: ""
+
+# The orchestrator's address.
+# Workers refuse plain HTTP to anything but loopback, unless `artidezi_worker_allow_insecure_orchestrator_url` is set.
+artidezi_worker_orchestrator_url: ""
+artidezi_worker_allow_insecure_orchestrator_url: false
+
+# This worker's token. The orchestrator lists this worker's id with the same token.
+artidezi_worker_token: ""
+
+# The `worker_pools` key this worker serves.
+artidezi_worker_pool: ""
+
+# This worker's name under `workers` in that pool.
+artidezi_worker_id: "{{ inventory_hostname }}"
+
+# What this worker offers, such as `docker-support`. Tags route work and are not a trust boundary.
+artidezi_worker_tags: []
+
+# How often to ask for work.
+artidezi_worker_poll_seconds: 15
+
+# What the worker file calls these paths, as the worker sees them.
+# Computed: do not override.
+artidezi_worker_runtime_config_file_path: "{{ (artidezi_worker_container_config_path if artidezi_worker_mode == 'container' else artidezi_worker_config_path) ~ '/worker.yaml' }}"
+artidezi_worker_runtime_token_file_path: "{{ (artidezi_worker_container_config_path ~ '/token') if artidezi_worker_mode == 'container' else (artidezi_worker_secrets_path ~ '/token') }}"
+artidezi_worker_runtime_home_path: "{{ (artidezi_worker_container_data_path ~ '/home') if artidezi_worker_mode == 'container' else artidezi_worker_home_path }}"
+artidezi_worker_runtime_workspaces_path: "{{ (artidezi_worker_container_data_path ~ '/workspaces') if artidezi_worker_mode == 'container' else artidezi_worker_workspaces_path }}"
+artidezi_worker_runtime_credentials_path: "{{ (artidezi_worker_container_data_path ~ '/credentials') if artidezi_worker_mode == 'container' else artidezi_worker_credentials_path }}"
+
+# Units the worker needs (required), and ones it should start with (wanted).
+# In `host` mode, it does not need Docker, but tasks may.
+artidezi_worker_systemd_required_services_list: "{{ artidezi_worker_systemd_required_services_list_default + artidezi_worker_systemd_required_services_list_auto + artidezi_worker_systemd_required_services_list_custom }}"
+artidezi_worker_systemd_required_services_list_default: "{{ [devture_systemd_docker_base_docker_service_name] if artidezi_worker_mode == 'container' and devture_systemd_docker_base_docker_service_name else [] }}"
+artidezi_worker_systemd_required_services_list_auto: []
+artidezi_worker_systemd_required_services_list_custom: []
+
+artidezi_worker_systemd_wanted_services_list: "{{ artidezi_worker_systemd_wanted_services_list_default + artidezi_worker_systemd_wanted_services_list_auto + artidezi_worker_systemd_wanted_services_list_custom }}"
+artidezi_worker_systemd_wanted_services_list_default: "{{ ['network-online.target'] + ([devture_systemd_docker_base_docker_service_name] if artidezi_worker_mode == 'host' and devture_systemd_docker_base_docker_service_name else []) }}"
+artidezi_worker_systemd_wanted_services_list_auto: []
+artidezi_worker_systemd_wanted_services_list_custom: []
+
+# How long the worker gets to stop before it is killed.
+# On SIGTERM, it stops the running attempt (giving its processes up to 15 seconds), reports and cleans up.
+artidezi_worker_stop_grace_time_seconds: 120
+
+# Controls how long the pre-start cleanup waits for Docker to release the container's name.
+artidezi_worker_container_cleanup_timeout_seconds: "{{ devture_systemd_docker_base_container_cleanup_timeout_seconds }}"
+
+# Controls the delay between pre-start cleanup retries.
+artidezi_worker_container_cleanup_retry_delay_seconds: "{{ devture_systemd_docker_base_container_cleanup_retry_delay_seconds }}"
+
+# Shell command used in the systemd pre-start phase to deterministically remove a stale container and wait until Docker releases its name.
+artidezi_worker_container_cleanup_command: |
+  i=0;
+  while [ "$i" -lt {{ artidezi_worker_container_cleanup_timeout_seconds }} ]; do
+  {{ devture_systemd_docker_base_host_command_docker }} stop -t {{ artidezi_worker_stop_grace_time_seconds }} {{ artidezi_worker_identifier }} >/dev/null 2>&1 || true;
+  {{ devture_systemd_docker_base_host_command_docker }} rm -f {{ artidezi_worker_identifier }} >/dev/null 2>&1 || true;
+  if {{ devture_systemd_docker_base_host_command_docker }} container inspect {{ artidezi_worker_identifier }} >/dev/null 2>&1; then
+  i=$((i + 1));
+  sleep {{ artidezi_worker_container_cleanup_retry_delay_seconds }};
+  continue;
+  fi;
+  if {{ devture_systemd_docker_base_host_command_docker }} info >/dev/null 2>&1; then
+  exit 0;
+  fi;
+  echo "Failed to query Docker daemon while cleaning up {{ artidezi_worker_identifier }}" >&2;
+  exit 1;
+  done;
+  echo "Failed to remove stale container {{ artidezi_worker_identifier }} after {{ artidezi_worker_container_cleanup_timeout_seconds }} attempts" >&2;
+  exit 1
+
+# artidezi_worker_restart_necessary controls whether the worker's systemd service will be restarted (when true) or merely started (when false) by the systemd service manager role (when conditional restart is enabled).
+#
+# This value is automatically computed during installation based on whether its configuration, token, systemd service file, image or binary changed.
+# The default of `false` means "no restart needed" — appropriate when the role's installation tasks haven't run (e.g. due to --tags skipping them).
+#
+# Restarting a worker stops the attempt it is running.
+artidezi_worker_restart_necessary: false

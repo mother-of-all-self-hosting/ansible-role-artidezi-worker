@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+---
+
+- name: Check existence of the ArtiDezi worker systemd service
+  ansible.builtin.stat:
+    path: "{{ devture_systemd_docker_base_systemd_path }}/{{ artidezi_worker_identifier }}.service"
+  register: artidezi_worker_service_stat
+
+- name: Uninstall the ArtiDezi worker systemd service
+  when: artidezi_worker_service_stat.stat.exists | bool
+  block:
+    - name: Ensure the ArtiDezi worker is stopped and disabled
+      ansible.builtin.systemd_service:
+        name: "{{ artidezi_worker_identifier }}.service"
+        state: stopped
+        enabled: false
+
+    - name: Ensure the ArtiDezi worker systemd service doesn't exist
+      ansible.builtin.file:
+        path: "{{ devture_systemd_docker_base_systemd_path }}/{{ artidezi_worker_identifier }}.service"
+        state: absent
+
+    - name: Ensure systemd is reloaded
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+- name: Ensure the ArtiDezi worker container network does not exist
+  when: artidezi_worker_container_network_deletion_enabled | bool
+  block:
+    - name: Ensure the ArtiDezi worker container network does not exist via community.docker.docker_network
+      when: devture_systemd_docker_base_container_network_creation_method == 'ansible-module'
+      community.docker.docker_network:
+        name: "{{ artidezi_worker_container_network }}"
+        state: absent
+
+    - name: Ensure the ArtiDezi worker container network does not exist via ansible.builtin.command
+      when: devture_systemd_docker_base_container_network_creation_method == 'command'
+      ansible.builtin.command:
+        cmd: >-
+          {{ devture_systemd_docker_base_host_command_docker }} network rm
+          {{ artidezi_worker_container_network }}
+      register: artidezi_worker_network_deletion_result
+      changed_when: artidezi_worker_container_network in artidezi_worker_network_deletion_result.stdout
+      failed_when: artidezi_worker_network_deletion_result.rc != 0 and 'not found' not in artidezi_worker_network_deletion_result.stderr
+
+# This includes the credentials: a ChatGPT login has to be enrolled again on a reinstalled worker.
+- name: Ensure ArtiDezi worker files don't exist
+  ansible.builtin.file:
+    path: "{{ artidezi_worker_base_path }}"
+    state: absent

@@ -1,0 +1,22 @@
+{#
+SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+#}
+orchestrator_url: {{ artidezi_worker_orchestrator_url | to_json }}
+{% if artidezi_worker_allow_insecure_orchestrator_url | bool %}
+allow_insecure_orchestrator_url: true
+{% endif %}
+token_file: {{ artidezi_worker_runtime_token_file_path | to_json }}
+worker_pool: {{ artidezi_worker_pool | to_json }}
+worker_id: {{ artidezi_worker_id | to_json }}
+tags: {{ artidezi_worker_tags | to_json }}
+workspaces_root: {{ artidezi_worker_runtime_workspaces_path | to_json }}
+credentials_root: {{ artidezi_worker_runtime_credentials_path | to_json }}
+poll_seconds: {{ artidezi_worker_poll_seconds | int }}
+{% if artidezi_worker_codex_binary | length > 0 %}
+codex_binary: {{ artidezi_worker_codex_binary | to_json }}
+{% endif %}
+{% if artidezi_worker_pi_binary | length > 0 %}
+pi_binary: {{ artidezi_worker_pi_binary | to_json }}
+{% endif %}

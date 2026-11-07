@@ -1,0 +1,267 @@
+# SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+---
+# What this suite is guarding against
+#
+# A worker that merely runs says little: with a harness that doesn't start for the worker's user, or that can't find its companions, it would still poll.
+# So the suite runs everything the way the worker does (its user, an emptied environment, a HOME in the workspace), checks that the hardening is really in place,
+# watches the worker retry an orchestrator that doesn't answer, and stops it.
+
+- name: Verify the ArtiDezi worker in container mode
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    artidezi_worker_molecule_data: /artidezi-worker/data
+    # What a task gets: the worker clears the environment and keeps PATH.
+    artidezi_worker_molecule_task_environment: >-
+      env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      HOME=/var/lib/artidezi-worker/workspaces/att_verify/home
+      XDG_CONFIG_HOME=/var/lib/artidezi-worker/workspaces/att_verify/home/.config
+      XDG_CACHE_HOME=/var/lib/artidezi-worker/workspaces/att_verify/home/.cache
+      XDG_DATA_HOME=/var/lib/artidezi-worker/workspaces/att_verify/home/.local/share
+
+  tasks:
+    - name: Verify that the worker works
+      block:
+        - name: Load the role's defaults
+          ansible.builtin.include_vars:
+            file: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}/defaults/main.yml"
+            name: artidezi_worker_molecule_defaults
+
+        - name: Inspect the container
+          ansible.builtin.command:
+            cmd: docker inspect artidezi-worker
+          register: artidezi_worker_molecule_inspect
+          changed_when: false
+
+        - name: Assert that the container is hardened and runs the customized image
+          vars:
+            container: "{{ (artidezi_worker_molecule_inspect.stdout | from_json)[0] }}"
+          ansible.builtin.assert:
+            that:
+              - container.Config.Image == 'localhost/artidezi-worker:' ~ artidezi_worker_molecule_defaults.artidezi_worker_version ~ '-customized'
+              - container.Config.User == '1234:1235'
+              - container.HostConfig.CapDrop == ['ALL']
+              - container.HostConfig.CapAdd is none
+              - container.HostConfig.Privileged == false
+              - container.HostConfig.ReadonlyRootfs == true
+              - container.HostConfig.Init == true
+              - "'no-new-privileges' in container.HostConfig.SecurityOpt"
+              - container.HostConfig.PortBindings == {}
+              - container.HostConfig.NetworkMode == 'artidezi-worker'
+              - container.Mounts | selectattr('Source', 'search', 'docker.sock') | list | length == 0
+
+        - name: Read the versions, as a task would
+          ansible.builtin.command:
+            cmd: >-
+              docker exec artidezi-worker sh -c '
+              mkdir -p /var/lib/artidezi-worker/workspaces/att_verify/home &&
+              cd /var/lib/artidezi-worker/workspaces/att_verify &&
+              {{ artidezi_worker_molecule_task_environment }} sh -c "$0"' '{{ item }}'
+          loop:
+            - id -un
+            - id -u
+            - codex --version
+            - pi --version
+            - mise --version
+            - just --version
+            - node --version
+            - rg --version
+            - fd --version
+            - jq --version
+            - cat /etc/artidezi-worker-molecule-marker
+          register: artidezi_worker_molecule_tools
+          changed_when: false
+
+        - name: Assert the versions
+          vars:
+            tools: "{{ artidezi_worker_molecule_tools.results | map(attribute='stdout') | list }}"
+          ansible.builtin.assert:
+            that:
+              - tools[0] == 'artidezi-worker'
+              - tools[1] == '1234'
+              - tools[2] == 'codex-cli ' ~ artidezi_worker_molecule_defaults.artidezi_worker_codex_version
+              - tools[3] == artidezi_worker_molecule_defaults.artidezi_worker_pi_version
+              - tools[4].split(' ')[0] == artidezi_worker_molecule_defaults.artidezi_worker_mise_version
+              - tools[5] == 'just ' ~ artidezi_worker_molecule_defaults.artidezi_worker_just_version
+              - tools[6] is match('^v24[.]')
+              - tools[10] == 'custom'
+            success_msg: "{{ tools[:7] }}"
+
+        # A shebang would let the Node.js of a project run Pi, and the project's mise configuration would break it.
+        - name: Assert that Pi keeps its own Node.js, and a project's mise configuration works
+          ansible.builtin.command:
+            cmd: >-
+              docker exec artidezi-worker sh -c '
+              cd /var/lib/artidezi-worker/workspaces/att_verify &&
+              printf "[tools]\njust = \"1.50.0\"\n" > mise.toml &&
+              {{ artidezi_worker_molecule_task_environment }} sh -c "
+              pi --version && mise exec -- just --version && mise ls --current"'
+          register: artidezi_worker_molecule_project_tools
+          changed_when: false
+          failed_when: >-
+            artidezi_worker_molecule_project_tools.rc != 0
+            or 'just 1.50.0' not in artidezi_worker_molecule_project_tools.stdout
+
+        - name: Assert what a task can write to
+          ansible.builtin.command:
+            cmd: >-
+              docker exec artidezi-worker sh -c '
+              touch /tmp/probe /var/lib/artidezi-worker/home/probe /var/lib/artidezi-worker/workspaces/probe /var/lib/artidezi-worker/credentials/probe &&
+              cp /bin/true /tmp/probe-exec && /tmp/probe-exec &&
+              rm /tmp/probe /tmp/probe-exec /var/lib/artidezi-worker/home/probe /var/lib/artidezi-worker/workspaces/probe /var/lib/artidezi-worker/credentials/probe &&
+              ! touch /opt/probe 2>/dev/null &&
+              ! touch /etc/artidezi-worker/token 2>/dev/null'
+          changed_when: false
+
+        - name: Check the token's file
+          ansible.builtin.stat:
+            path: /artidezi-worker/secrets/token
+          register: artidezi_worker_molecule_token
+
+        - name: Assert that the token is readable by the worker alone, and only in its file
+          ansible.builtin.assert:
+            that:
+              - artidezi_worker_molecule_token.stat.mode == '0440'
+              - artidezi_worker_molecule_token.stat.pw_name == 'root'
+              - artidezi_worker_molecule_token.stat.gid == 1235
+
+        - name: Search for the token outside of its file
+          ansible.builtin.command:
+            cmd: grep -r molecule-worker-token-7f3a /artidezi-worker/config /artidezi-worker/customized-container-src /etc/systemd/system/artidezi-worker.service
+          register: artidezi_worker_molecule_token_search
+          changed_when: false
+          failed_when: artidezi_worker_molecule_token_search.rc != 1
+
+        - name: Sample the worker's restart counter
+          ansible.builtin.systemd_service:
+            name: artidezi-worker.service
+          register: artidezi_worker_molecule_restarts_before
+
+        # `Restart=always` means the unit reads `active` while it is crash-looping, so `active` on its own says very little.
+        # Comfortably longer than the unit's `RestartSec=30`, so a crash loop has to tick at least once inside the window.
+        - name: Watch the worker for 45 seconds
+          ansible.builtin.pause:
+            seconds: 45
+
+        - name: Sample the worker's restart counter again
+          ansible.builtin.systemd_service:
+            name: artidezi-worker.service
+          register: artidezi_worker_molecule_restarts_after
+
+        - name: Read the worker's log
+          ansible.builtin.command:
+            cmd: journalctl --no-pager --output=cat --unit=artidezi-worker.service
+          register: artidezi_worker_molecule_log
+          changed_when: false
+
+        - name: Assert that the worker stayed up and kept retrying
+          ansible.builtin.assert:
+            that:
+              - artidezi_worker_molecule_restarts_after.status.NRestarts == artidezi_worker_molecule_restarts_before.status.NRestarts
+              - artidezi_worker_molecule_restarts_after.status.ActiveState == 'active'
+              - artidezi_worker_molecule_log.stdout_lines | select('search', 'worker iteration failed') | list | length >= 10
+              - "'molecule-worker-token-7f3a' not in artidezi_worker_molecule_log.stdout"
+            success_msg: "{{ artidezi_worker_molecule_log.stdout_lines | select('search', 'worker iteration failed') | list | length }} failed iterations, {{ artidezi_worker_molecule_restarts_after.status.NRestarts }} restarts"
+
+        - name: Stop the container
+          ansible.builtin.shell:
+            cmd: |
+              set -eu
+              started="$(date +%s)"
+              docker stop --time 60 artidezi-worker >/dev/null
+              echo "$(($(date +%s) - started))"
+            executable: /bin/bash
+          register: artidezi_worker_molecule_docker_stop
+          changed_when: true
+
+        - name: Read the worker's log again
+          ansible.builtin.command:
+            cmd: journalctl --no-pager --output=cat --unit=artidezi-worker.service
+          register: artidezi_worker_molecule_log
+          changed_when: false
+
+        - name: Assert that the worker stopped on SIGTERM rather than got killed
+          ansible.builtin.assert:
+            that:
+              - artidezi_worker_molecule_docker_stop.stdout | int < 10
+              - artidezi_worker_molecule_log.stdout_lines | select('search', 'worker stopped') | list | length == 1
+            success_msg: "`docker stop` took {{ artidezi_worker_molecule_docker_stop.stdout }}s"
+
+        - name: Leave what interrupted attempts leave behind
+          ansible.builtin.shell:
+            cmd: |
+              set -eu
+              cd {{ artidezi_worker_molecule_data }}/workspaces
+              mkdir -p att_stale/home inputs/att_stale other
+              touch /tmp/sweep-canary
+              ln -s /tmp/sweep-canary att_link
+              ln -s /tmp att_stale/escape
+            executable: /bin/bash
+          changed_when: true
+
+        - name: Restart the worker
+          ansible.builtin.systemd_service:
+            name: artidezi-worker.service
+            state: restarted
+
+        - name: Find what the sweep kept
+          ansible.builtin.find:
+            paths: ["{{ artidezi_worker_molecule_data }}/workspaces", "{{ artidezi_worker_molecule_data }}/workspaces/inputs"]
+            patterns: att_*
+            file_type: any
+          register: artidezi_worker_molecule_swept
+
+        - name: Check the canary
+          ansible.builtin.stat:
+            path: /tmp/sweep-canary
+          register: artidezi_worker_molecule_canary
+
+        - name: Assert that the sweep removed the stale attempts, and nothing else
+          ansible.builtin.assert:
+            that:
+              - artidezi_worker_molecule_swept.matched == 0
+              - artidezi_worker_molecule_canary.stat.exists
+
+        - name: Quarantine the worker
+          ansible.builtin.shell:
+            cmd: |
+              set -eu
+              cd {{ artidezi_worker_molecule_data }}/workspaces
+              mkdir att_evidence
+              echo '{}' > worker-quarantine.json
+            executable: /bin/bash
+          changed_when: true
+
+        - name: Restart the quarantined worker
+          ansible.builtin.systemd_service:
+            name: artidezi-worker.service
+            state: restarted
+
+        - name: Check the evidence
+          ansible.builtin.stat:
+            path: "{{ artidezi_worker_molecule_data }}/workspaces/att_evidence"
+          register: artidezi_worker_molecule_evidence
+
+        - name: Assert that the sweep left a quarantined worker alone
+          ansible.builtin.assert:
+            that: artidezi_worker_molecule_evidence.stat.exists
+
+      rescue:
+        - name: Retrieve the worker's log
+          ansible.builtin.command:
+            cmd: journalctl --no-pager --output=cat --unit=artidezi-worker.service
+          register: artidezi_worker_molecule_service_log
+          changed_when: false
+
+        - name: Show the worker's log
+          ansible.builtin.debug:
+            var: artidezi_worker_molecule_service_log.stdout_lines
+
+        - name: Fail because verification did not pass
+          ansible.builtin.fail:
+            msg: "ArtiDezi worker verification failed. The log is printed above."

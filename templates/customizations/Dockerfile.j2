@@ -1,0 +1,68 @@
+{#
+SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+#}
+{% if artidezi_worker_codex_enabled | bool %}
+FROM {{ artidezi_worker_container_image }} AS codex
+USER root
+ADD {{ artidezi_worker_codex_archive_url }} /tmp/codex-package.tar.gz
+RUN mkdir /opt/codex && tar --extract --gzip --no-same-owner --file=/tmp/codex-package.tar.gz --directory=/opt/codex
+
+{% endif %}
+{% if artidezi_worker_pi_enabled | bool %}
+FROM {{ artidezi_worker_pi_node_container_image }} AS pi
+RUN npm install --global --ignore-scripts --prefix=/opt/pi {{ (artidezi_worker_pi_package ~ '@' ~ artidezi_worker_pi_version) | quote }}
+
+{% endif %}
+FROM {{ artidezi_worker_container_image }}
+USER root
+
+{% if artidezi_worker_container_image_customizations_packages_to_install | length > 0 %}
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends {{ artidezi_worker_container_image_customizations_packages_to_install | map('quote') | join(' ') }} \
+ && rm -rf /var/lib/apt/lists/*
+
+{% endif %}
+{% if artidezi_worker_codex_enabled | bool %}
+COPY --from=codex /opt/codex /opt/codex
+RUN ln -s /opt/codex/bin/codex /opt/codex/bin/codex-code-mode-host /usr/local/bin/
+
+{% endif %}
+{% if artidezi_worker_mise_enabled | bool %}
+COPY --from={{ artidezi_worker_mise_container_image }} /usr/local/bin/mise /usr/local/bin/mise
+{# The worker clears the environment, so what mise should do for tasks has to be in its system-wide configuration. #}
+COPY <<'EOT' /etc/mise/config.toml
+[settings]
+yes = true
+trusted_config_paths = [{{ (artidezi_worker_container_data_path ~ '/workspaces') | to_json }}]
+EOT
+
+{% if artidezi_worker_mise_packages | length > 0 %}
+RUN set -eu; \
+    export MISE_DATA_DIR=/opt/mise MISE_CONFIG_DIR=/tmp/mise-config MISE_CACHE_DIR=/tmp/mise-cache; \
+    mise use --global {{ artidezi_worker_mise_packages | map('quote') | join(' ') }}; \
+    for directory in $(mise bin-paths); do \
+      for file in "$directory"/*; do \
+        if [ -f "$file" ] && [ -x "$file" ]; then ln -s "$file" /usr/local/bin/; fi; \
+      done; \
+    done; \
+    rm -rf /tmp/mise-config /tmp/mise-cache /opt/mise/downloads
+
+{% endif %}
+{% endif %}
+{% if artidezi_worker_pi_enabled | bool %}
+COPY --from=pi /opt/pi /opt/pi
+COPY --from=pi /usr/local/bin/node /opt/pi/node
+{# A shebang would find whichever `node` comes first on PATH, and that is up to the project. #}
+COPY --chmod=0755 <<'EOT' /usr/local/bin/pi
+#!/bin/sh
+exec /opt/pi/node /opt/pi/bin/pi "$@"
+EOT
+{# Debian calls it `fdfind`, Pi looks for `fd`. #}
+RUN if ! command -v fd >/dev/null; then ln -s /usr/bin/fdfind /usr/local/bin/fd; fi
+
+{% endif %}
+{{ artidezi_worker_container_image_customizations_dockerfile_body_custom }}
+
+USER artidezi

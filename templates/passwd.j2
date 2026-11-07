@@ -1,0 +1,7 @@
+{#
+SPDX-FileCopyrightText: 2026 Slavi Pantaleev
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+#}
+root:x:0:0:root:/root:/usr/sbin/nologin
+artidezi-worker:x:{{ artidezi_worker_uid }}:{{ artidezi_worker_gid }}:ArtiDezi worker:{{ artidezi_worker_runtime_home_path }}:/bin/bash
