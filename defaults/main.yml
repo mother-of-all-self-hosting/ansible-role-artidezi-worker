@@ -85,7 +85,7 @@ artidezi_worker_pi_package: "@earendil-works/pi-coding-agent"
 # Pi needs Node.js 22.19+. It gets its own copy from the official image, under /opt/pi and off PATH:
 # neither the Node.js that a project uses, nor its absence, can affect Pi, and Pi's Node.js does not end up in the projects' way.
 # renovate: datasource=docker depName=docker.io/library/node versioning=node
-artidezi_worker_pi_node_version: 24.22.2
+artidezi_worker_pi_node_version: 26.13.0
 artidezi_worker_pi_node_container_image: "{{ artidezi_worker_pi_node_container_image_registry_prefix }}node:{{ artidezi_worker_pi_node_version }}-trixie-slim"
 artidezi_worker_pi_node_container_image_registry_prefix: docker.io/
 
