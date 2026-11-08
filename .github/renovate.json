@@ -3,5 +3,12 @@
   "extends": [
     "github>mother-of-all-self-hosting/renovate-config#v1.1.0",
     "github>mother-of-all-self-hosting/renovate-config//patch-automerge#v1.1.0"
+  ],
+  "packageRules": [
+    {
+      "description": "ArtiDezi's CalVer releases can carry significant changes in what Renovate sees as a patch bump: leave every bump to review.",
+      "matchPackageNames": ["ghcr.io/devture/artidezi"],
+      "automerge": false
+    }
   ]
 }
