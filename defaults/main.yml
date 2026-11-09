@@ -99,7 +99,7 @@ artidezi_worker_pi_packages: [fd-find, libatomic1, ripgrep]
 artidezi_worker_mise_enabled: false
 
 # renovate: datasource=docker depName=docker.io/jdxcode/mise versioning=loose
-artidezi_worker_mise_version: 2026.11.4
+artidezi_worker_mise_version: 2026.11.5
 artidezi_worker_mise_container_image: "{{ artidezi_worker_mise_container_image_registry_prefix }}jdxcode/mise:{{ artidezi_worker_mise_version }}"
 artidezi_worker_mise_container_image_registry_prefix: docker.io/
 
