@@ -50,7 +50,7 @@ artidezi_worker_gid: ""
 # Use the same release as the orchestrator.
 # The role's own tags are `v<artidezi_worker_version>-<release>` (see bin/compute-next-tag.sh).
 # renovate: datasource=docker depName=ghcr.io/devture/artidezi versioning=loose
-artidezi_worker_version: v2026.11.12.0
+artidezi_worker_version: v2026.11.12.1
 
 # The published image. It bundles no harness.
 artidezi_worker_container_image: "{{ artidezi_worker_container_image_registry_prefix }}devture/artidezi:{{ artidezi_worker_container_image_tag }}"
