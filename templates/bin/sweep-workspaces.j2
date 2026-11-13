@@ -29,3 +29,12 @@ for path in "$workspaces"/att_* "$workspaces"/inputs/att_*; do
 	echo "Removing stale $path"
 	rm -rf --one-file-system -- "$path"
 done
+{% if artidezi_worker_mode == 'host' and artidezi_worker_tmp_on_disk_enabled | bool %}
+
+# The worker's own /tmp. Its parent is the root-owned data directory, so the worker can't have replaced it.
+# `find -delete` doesn't follow symbolic links, and -xdev keeps it out of anything mounted inside.
+tmp='{{ artidezi_worker_tmp_path }}'
+if [ -d "$tmp" ] && [ ! -L "$tmp" ]; then
+	find "$tmp" -xdev -mindepth 1 -depth -delete
+fi
+{% endif %}

@@ -65,6 +65,15 @@
     - {path: "{{ artidezi_worker_workspaces_path }}", mode: '0750', owner: "{{ artidezi_worker_uid }}", group: "{{ artidezi_worker_gid }}"}
     - {path: "{{ artidezi_worker_credentials_path }}", mode: '0700', owner: "{{ artidezi_worker_uid }}", group: "{{ artidezi_worker_gid }}"}
 
+- name: Ensure the ArtiDezi worker's /tmp exists
+  when: artidezi_worker_mode == 'host' and artidezi_worker_tmp_on_disk_enabled | bool
+  ansible.builtin.file:
+    path: "{{ artidezi_worker_tmp_path }}"
+    state: directory
+    mode: '0700'
+    owner: "{{ artidezi_worker_uid }}"
+    group: "{{ artidezi_worker_gid }}"
+
 - name: Ensure the ArtiDezi worker container image is pulled via community.docker.docker_image_pull
   when: devture_systemd_docker_base_container_image_pull_method == 'ansible-module'
   community.docker.docker_image_pull:

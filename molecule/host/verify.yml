@@ -48,6 +48,17 @@
             path: /artidezi-worker/customized-container-src
           register: artidezi_worker_molecule_customized_src
 
+        - name: Read the worker's /tmp
+          ansible.builtin.shell:
+            cmd: nsenter --target "$(pgrep --oldest --exact artidezi)" --mount findmnt --noheadings --output SOURCE /tmp
+          register: artidezi_worker_molecule_tmp
+          changed_when: false
+
+        - name: Read the worker's configuration
+          ansible.builtin.slurp:
+            src: /artidezi-worker/config/worker.yaml
+          register: artidezi_worker_molecule_config
+
         - name: Assert how the worker runs
           ansible.builtin.assert:
             that:
@@ -58,6 +69,9 @@
               - artidezi_worker_molecule_process.stdout is search('/artidezi-worker/bin/artidezi worker --config /artidezi-worker/config/worker.yaml')
               - artidezi_worker_molecule_containers.stdout | length == 0
               - not artidezi_worker_molecule_customized_src.stat.exists
+              # Its /tmp is the directory on its data disk, and it sweeps what attempts leave there.
+              - artidezi_worker_molecule_tmp.stdout is search('/artidezi-worker/data/tmp')
+              - (artidezi_worker_molecule_config.content | b64decode | from_yaml).sweep_system_tmp
             success_msg: "{{ artidezi_worker_molecule_process.stdout }}"
 
         - name: Sample the worker's restart counter
@@ -81,6 +95,12 @@
             state: directory
             owner: root
             mode: '0700'
+
+        - name: Leave a file in the worker's /tmp
+          ansible.builtin.copy:
+            content: leftover
+            dest: /artidezi-worker/data/tmp/leftover
+            mode: '0600'
 
         - name: Stop the worker
           ansible.builtin.systemd_service:
@@ -116,9 +136,16 @@
             path: /artidezi-worker/data/workspaces/att_stale
           register: artidezi_worker_molecule_stale
 
-        - name: Assert that the sweep removed the stale attempt
+        - name: Check the worker's /tmp
+          ansible.builtin.stat:
+            path: /artidezi-worker/data/tmp/leftover
+          register: artidezi_worker_molecule_leftover
+
+        - name: Assert that the sweep removed the stale attempt and emptied the worker's /tmp
           ansible.builtin.assert:
-            that: not artidezi_worker_molecule_stale.stat.exists
+            that:
+              - not artidezi_worker_molecule_stale.stat.exists
+              - not artidezi_worker_molecule_leftover.stat.exists
 
       rescue:
         - name: Retrieve the worker's log

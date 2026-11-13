@@ -16,6 +16,8 @@ After={{ service }}
 {% endfor %}
 {% if artidezi_worker_mode == 'container' %}
 DefaultDependencies=no
+{% elif artidezi_worker_tmp_on_disk_enabled | bool %}
+RequiresMountsFor={{ artidezi_worker_tmp_path }}
 {% endif %}
 
 [Service]
@@ -31,6 +33,10 @@ SupplementaryGroups={{ artidezi_worker_systemd_supplementary_groups | join(' ') 
 {% endif %}
 WorkingDirectory={{ artidezi_worker_home_path }}
 EnvironmentFile={{ artidezi_worker_config_path }}/env
+{% if artidezi_worker_tmp_on_disk_enabled | bool %}
+# A /tmp of the worker's own, on disk, for the tools that write there.
+BindPaths={{ artidezi_worker_tmp_path }}:/tmp
+{% endif %}
 {% endif %}
 # As root (+): it removes what interrupted attempts left behind, including root-owned files.
 ExecStartPre=+{{ artidezi_worker_bin_path }}/sweep-workspaces

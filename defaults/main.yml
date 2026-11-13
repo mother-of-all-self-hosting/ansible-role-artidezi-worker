@@ -40,6 +40,17 @@ artidezi_worker_home_path: "{{ artidezi_worker_data_path }}/home"
 artidezi_worker_workspaces_path: "{{ artidezi_worker_data_path }}/workspaces"
 artidezi_worker_credentials_path: "{{ artidezi_worker_data_path }}/credentials"
 
+# In `host` mode, gives the worker a /tmp of its own on disk: `artidezi_worker_tmp_path`, bind-mounted
+# over /tmp for the worker's service only. Each attempt's TMPDIR points to its own directory in the
+# workspace, but tools that ignore TMPDIR, and agents that name /tmp explicitly, write to /tmp.
+# On hosts where /tmp is a tmpfs, that is memory, and a large build there can exhaust it.
+# The directory is emptied before the worker starts. Disable to leave the worker on the host's /tmp.
+artidezi_worker_tmp_on_disk_enabled: true
+
+# Next to the workspaces, under the root-owned data directory, so that the worker can't replace it.
+# Computed: do not override.
+artidezi_worker_tmp_path: "{{ artidezi_worker_data_path }}/tmp"
+
 # The worker runs as this user.
 # In `container` mode, it does not need to exist on the host or in the image (the role provides `/etc/passwd` and `/etc/group`).
 # In `host` mode, it has to exist on the host.
@@ -50,7 +61,7 @@ artidezi_worker_gid: ""
 # Use the same release as the orchestrator.
 # The role's own tags are `v<artidezi_worker_version>-<release>` (see bin/compute-next-tag.sh).
 # renovate: datasource=docker depName=ghcr.io/devture/artidezi versioning=loose
-artidezi_worker_version: v2026.11.13.0
+artidezi_worker_version: v2026.11.13.1
 
 # The published image. It bundles no harness.
 artidezi_worker_container_image: "{{ artidezi_worker_container_image_registry_prefix }}devture/artidezi:{{ artidezi_worker_container_image_tag }}"
@@ -205,6 +216,10 @@ artidezi_worker_tags: []
 
 # How often to ask for work.
 artidezi_worker_poll_seconds: 15
+
+# Removes what the worker's user created in /tmp during an attempt, once it ends (`sweep_system_tmp`).
+# Only safe for a /tmp of the worker's own, as with `artidezi_worker_tmp_on_disk_enabled` or in `container` mode.
+artidezi_worker_sweep_system_tmp_enabled: "{{ artidezi_worker_mode == 'container' or artidezi_worker_tmp_on_disk_enabled | bool }}"
 
 # What the worker file calls these paths, as the worker sees them.
 # Computed: do not override.

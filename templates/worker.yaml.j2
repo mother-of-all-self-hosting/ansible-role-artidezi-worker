@@ -14,6 +14,9 @@ tags: {{ artidezi_worker_tags | to_json }}
 workspaces_root: {{ artidezi_worker_runtime_workspaces_path | to_json }}
 credentials_root: {{ artidezi_worker_runtime_credentials_path | to_json }}
 poll_seconds: {{ artidezi_worker_poll_seconds | int }}
+{% if artidezi_worker_sweep_system_tmp_enabled | bool %}
+sweep_system_tmp: true
+{% endif %}
 {% if artidezi_worker_codex_binary | length > 0 %}
 codex_binary: {{ artidezi_worker_codex_binary | to_json }}
 {% endif %}

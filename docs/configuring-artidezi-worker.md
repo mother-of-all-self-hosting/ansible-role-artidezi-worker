@@ -139,6 +139,8 @@ artidezi_worker_tags: [docker-support]
 >[!WARNING]
 > Membership of the `docker` group makes every task root on the host.
 
+In this mode the worker's `/tmp` is a directory on its data disk (`artidezi_worker_tmp_path`), bind-mounted for its service only. Tools that ignore `TMPDIR`, and agents that name `/tmp` explicitly, then don't fill the host's `/tmp`, which may be a `tmpfs` and so memory. The worker removes what each attempt left there, and the directory is emptied before the worker starts. Files earlier attempts left in the host's `/tmp` stay there: remove them yourself. Set `artidezi_worker_tmp_on_disk_enabled: false` to use the host's `/tmp` instead.
+
 ### Adjusting the container (optional)
 
 In `container` mode, the container runs unprivileged, with a read-only root filesystem, on a network of its own, and with no Docker socket. It does not isolate tasks from each other, or from what the host can reach: firewall that outside the worker.
