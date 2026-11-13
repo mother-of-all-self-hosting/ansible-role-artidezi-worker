@@ -90,7 +90,7 @@ artidezi_worker_codex_version: 0.167.0
 artidezi_worker_codex_archive_url: "https://github.com/openai/codex/releases/download/rust-v{{ artidezi_worker_codex_version }}/codex-package-{{ ansible_facts['architecture'] }}-unknown-linux-musl.tar.gz"
 
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent versioning=semver
-artidezi_worker_pi_version: 1.5.1
+artidezi_worker_pi_version: 1.5.2
 artidezi_worker_pi_package: "@earendil-works/pi-coding-agent"
 
 # Pi needs Node.js 22.19+. It gets its own copy from the official image, under /opt/pi and off PATH:
