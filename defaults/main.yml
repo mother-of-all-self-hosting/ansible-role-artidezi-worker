@@ -167,7 +167,9 @@ artidezi_worker_container_network_deletion_enabled: true
 # Runs the container with a read-only root filesystem. The home, the workspaces, the credentials and /tmp remain writable.
 artidezi_worker_container_read_only_enabled: true
 
-# The mount options of the tmpfs on /tmp, which needs `exec`: test suites and build tools run things from there.
+# The mount options of the tmpfs on /tmp. Each attempt's TMPDIR points to its own directory in the workspace,
+# so this tmpfs holds the temporary files of tools that ignore TMPDIR (such as the JVM) and of things outside attempts.
+# It needs `exec`, since such tools may run things from there.
 # It counts against the container's memory, so it can't be left unbounded.
 artidezi_worker_container_tmpfs_options: "rw,nosuid,nodev,exec,size=2g"
 
