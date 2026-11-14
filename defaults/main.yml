@@ -86,7 +86,7 @@ artidezi_worker_pi_binary: "{{ ('/usr/local/bin/pi' if artidezi_worker_mode == '
 # Codex comes from its "package" release archive: the plain binary lacks `codex-code-mode-host`, without which the agent has no execution tool.
 # Its Git tags (`rust-v...`) can't be read by the Renovate regex in our shared preset, while its npm package carries the same versions.
 # renovate: datasource=npm depName=@openai/codex versioning=semver
-artidezi_worker_codex_version: 0.167.0
+artidezi_worker_codex_version: 0.167.1
 artidezi_worker_codex_archive_url: "https://github.com/openai/codex/releases/download/rust-v{{ artidezi_worker_codex_version }}/codex-package-{{ ansible_facts['architecture'] }}-unknown-linux-musl.tar.gz"
 
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent versioning=semver
