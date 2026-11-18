@@ -9,6 +9,11 @@
       "description": "ArtiDezi's CalVer releases can carry significant changes in what Renovate sees as a patch bump: leave every bump to review.",
       "matchPackageNames": ["ghcr.io/devture/artidezi"],
       "automerge": false
+    },
+    {
+      "description": "Codex releases are trusted and their hotfixes follow quickly: the release-age wait would only delay them, and could pick the release a hotfix replaces. We install the GitHub release archive, not the npm package.",
+      "matchPackageNames": ["@openai/codex"],
+      "minimumReleaseAge": "0 days"
     }
   ]
 }
