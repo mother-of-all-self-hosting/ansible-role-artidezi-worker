@@ -45,6 +45,7 @@ provisioner:
         artidezi_worker_poll_seconds: 2
         artidezi_worker_codex_enabled: true
         artidezi_worker_pi_enabled: true
+        artidezi_worker_claude_enabled: true
         artidezi_worker_mise_enabled: true
         artidezi_worker_mise_packages:
           - "just@{{ artidezi_worker_just_version }}"

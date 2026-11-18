@@ -48,7 +48,7 @@ None of them talks to a real orchestrator or model: the orchestrator's URL point
 
 ### `default`
 
-Tests a worker in `container` mode, with a customized image carrying Codex, Pi, mise, an apt package and a custom Dockerfile step.
+Tests a worker in `container` mode, with a customized image carrying Codex, Pi, Claude Code, mise, an apt package and a custom Dockerfile step.
 The worker's uid is unknown to the image.
 The scenario checks that:
 

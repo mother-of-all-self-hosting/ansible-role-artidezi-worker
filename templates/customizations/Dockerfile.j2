@@ -63,6 +63,14 @@ EOT
 RUN if ! command -v fd >/dev/null; then ln -s /usr/bin/fdfind /usr/local/bin/fd; fi
 
 {% endif %}
+{% if artidezi_worker_claude_enabled | bool %}
+ADD --checksum=sha256:{{ artidezi_worker_claude_checksum }} --chmod=0755 {{ artidezi_worker_claude_release_url }}/{{ artidezi_worker_claude_platform }}/claude /usr/local/bin/claude
+{# The version only changes with `artidezi_worker_claude_version`. Managed settings apply whatever HOME an attempt gets. #}
+COPY <<'EOT' /etc/claude-code/managed-settings.json
+{"env": {"DISABLE_AUTOUPDATER": "1"}}
+EOT
+
+{% endif %}
 {{ artidezi_worker_container_image_customizations_dockerfile_body_custom }}
 
 USER artidezi

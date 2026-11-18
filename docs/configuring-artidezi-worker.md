@@ -10,7 +10,7 @@ This is an [Ansible](https://www.ansible.com/) role which installs a worker of [
 
 ArtiDezi is a self-hosted maintenance agent that pushes the boring buttons: it lets coding agents do routine maintenance on your repositories, without giving them your forge credentials.
 
-A worker polls its orchestrator over HTTPS with its own token, and runs a coding-agent harness ([Codex](https://github.com/openai/codex) or [Pi](https://github.com/earendil-works/pi)) on repository checkouts. It only makes outgoing connections, so it needs no reverse proxy and no published ports. The orchestrator is installed separately, e.g. with [ansible-role-artidezi-orchestrator](https://github.com/mother-of-all-self-hosting/ansible-role-artidezi-orchestrator).
+A worker polls its orchestrator over HTTPS with its own token, and runs a coding-agent harness ([Codex](https://github.com/openai/codex), [Pi](https://github.com/earendil-works/pi) or [Claude Code](https://github.com/anthropics/claude-code)) on repository checkouts. It only makes outgoing connections, so it needs no reverse proxy and no published ports. The orchestrator is installed separately, e.g. with [ansible-role-artidezi-orchestrator](https://github.com/mother-of-all-self-hosting/ansible-role-artidezi-orchestrator).
 
 See the project's [documentation](https://github.com/devture/artidezi/blob/main/docs/README.md) to learn what ArtiDezi does and why it might be useful to you.
 
@@ -74,7 +74,13 @@ To offer Pi:
 artidezi_worker_pi_enabled: true
 ```
 
-In `container` mode (the default), this installs the harness into the worker's image. In `host` mode, install it yourself: the worker uses `codex` or `pi` from the host's `PATH`, or `artidezi_worker_codex_binary` and `artidezi_worker_pi_binary`.
+To offer Claude Code:
+
+```yaml
+artidezi_worker_claude_enabled: true
+```
+
+In `container` mode (the default), this installs the harness into the worker's image, at the version pinned in `artidezi_worker_codex_version`, `artidezi_worker_pi_version` or `artidezi_worker_claude_version`. In `host` mode, install it yourself: the worker uses `codex`, `pi` or `claude` from the host's `PATH`, or `artidezi_worker_codex_binary`, `artidezi_worker_pi_binary` and `artidezi_worker_claude_binary`. On the host, also turn off Claude Code's auto-updater (e.g. `{"env": {"DISABLE_AUTOUPDATER": "1"}}` in `/etc/claude-code/managed-settings.json`), as the image does.
 
 ### Adding project tooling (optional)
 
@@ -183,6 +189,7 @@ Harness credentials live in `<credentials_root>/<credential_ref>/`, owned by the
 | Codex | `openai_api_key` | `api_key` |
 | Codex | `chatgpt_login` | `auth.json` |
 | Pi | `openai_api_key` | `api_key` |
+| Claude Code | `anthropic_api_key` | `api_key` |
 
 The role does not manage these files.
 

@@ -74,6 +74,7 @@
             - fd --version
             - jq --version
             - cat /etc/artidezi-worker-molecule-marker
+            - claude --version
           register: artidezi_worker_molecule_tools
           changed_when: false
 
@@ -90,6 +91,7 @@
               - tools[5] == 'just ' ~ artidezi_worker_molecule_defaults.artidezi_worker_just_version
               - tools[6] is match('^v24[.]')
               - tools[10] == 'custom'
+              - tools[11] == artidezi_worker_molecule_defaults.artidezi_worker_claude_version ~ ' (Claude Code)'
             success_msg: "{{ tools[:7] }}"
 
         # A shebang would let the Node.js of a project run Pi, and the project's mise configuration would break it.

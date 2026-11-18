@@ -113,7 +113,30 @@
         owner: root
         group: root
 
+    # Only reads, so it runs in check mode too: the Dockerfile needs the checksum.
+    - name: Fetch the manifest of the Claude Code release
+      when: artidezi_worker_claude_enabled | bool
+      ansible.builtin.uri:
+        url: "{{ artidezi_worker_claude_release_url }}/manifest.json"
+        return_content: true
+      check_mode: false
+      register: artidezi_worker_claude_manifest_result
+
+    - name: Fail if the Claude Code release has no binary for this host
+      ansible.builtin.fail:
+        msg: "Claude Code {{ artidezi_worker_claude_version }} has no `{{ artidezi_worker_claude_platform }}` binary (`artidezi_worker_claude_platform`)."
+      vars:
+        artidezi_worker_claude_manifest: "{{ artidezi_worker_claude_manifest_result.json }}"
+      when: >-
+        artidezi_worker_claude_enabled | bool
+        and (
+          artidezi_worker_claude_manifest.version | default('') != artidezi_worker_claude_version | string
+          or artidezi_worker_claude_manifest.platforms[artidezi_worker_claude_platform].checksum | default('') is not match('^[0-9a-f]{64}$')
+        )
+
     - name: Ensure the customizations Dockerfile is created
+      vars:
+        artidezi_worker_claude_checksum: "{{ artidezi_worker_claude_manifest_result.json.platforms[artidezi_worker_claude_platform].checksum if artidezi_worker_claude_enabled | bool else '' }}"
       ansible.builtin.template:
         src: "{{ role_path }}/templates/customizations/Dockerfile.j2"
         dest: "{{ artidezi_worker_customized_container_src_path }}/Dockerfile"

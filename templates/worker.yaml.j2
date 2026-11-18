@@ -23,3 +23,6 @@ codex_binary: {{ artidezi_worker_codex_binary | to_json }}
 {% if artidezi_worker_pi_binary | length > 0 %}
 pi_binary: {{ artidezi_worker_pi_binary | to_json }}
 {% endif %}
+{% if artidezi_worker_claude_binary | length > 0 %}
+claude_binary: {{ artidezi_worker_claude_binary | to_json }}
+{% endif %}

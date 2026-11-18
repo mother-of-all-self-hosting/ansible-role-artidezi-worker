@@ -5,7 +5,7 @@
 ---
 # Project source code URL: https://github.com/devture/artidezi
 #
-# An ArtiDezi worker polls its orchestrator over HTTPS and runs a coding-agent harness (Codex or Pi) on repository checkouts.
+# An ArtiDezi worker polls its orchestrator over HTTPS and runs a coding-agent harness (Codex, Pi or Claude Code) on repository checkouts.
 # It only makes outgoing connections.
 # It is untrusted and it is not a sandbox: tasks run one after another in the same environment, and each can read the worker's token and model credentials.
 # See docs/configuring-artidezi-worker.md.
@@ -61,7 +61,7 @@ artidezi_worker_gid: ""
 # Use the same release as the orchestrator.
 # The role's own tags are `v<artidezi_worker_version>-<release>` (see bin/compute-next-tag.sh).
 # renovate: datasource=docker depName=ghcr.io/devture/artidezi versioning=loose
-artidezi_worker_version: v2026.11.18.0
+artidezi_worker_version: v2026.11.18.1
 
 # The published image. It bundles no harness.
 artidezi_worker_container_image: "{{ artidezi_worker_container_image_registry_prefix }}devture/artidezi:{{ artidezi_worker_container_image_tag }}"
@@ -75,13 +75,15 @@ artidezi_worker_container_image_registry_prefix_upstream_default: ghcr.io/
 # In `container` mode, enabling a harness installs it into the customized image.
 # In `host` mode, it only makes the worker use the harness from the host's PATH: install it yourself.
 #
-# Without either, point `artidezi_worker_codex_binary` or `artidezi_worker_pi_binary` at a harness you provide.
+# Without that, point `artidezi_worker_codex_binary`, `artidezi_worker_pi_binary` or `artidezi_worker_claude_binary` at a harness you provide.
 artidezi_worker_codex_enabled: false
 artidezi_worker_pi_enabled: false
+artidezi_worker_claude_enabled: false
 
 # Names or paths of the harnesses. Empty means not offered.
 artidezi_worker_codex_binary: "{{ ('/usr/local/bin/codex' if artidezi_worker_mode == 'container' else 'codex') if artidezi_worker_codex_enabled | bool else '' }}"
 artidezi_worker_pi_binary: "{{ ('/usr/local/bin/pi' if artidezi_worker_mode == 'container' else 'pi') if artidezi_worker_pi_enabled | bool else '' }}"
+artidezi_worker_claude_binary: "{{ ('/usr/local/bin/claude' if artidezi_worker_mode == 'container' else 'claude') if artidezi_worker_claude_enabled | bool else '' }}"
 
 # Codex comes from its "package" release archive: the plain binary lacks `codex-code-mode-host`, without which the agent has no execution tool.
 # Its Git tags (`rust-v...`) can't be read by the Renovate regex in our shared preset, while its npm package carries the same versions.
@@ -103,6 +105,15 @@ artidezi_worker_pi_node_container_image_registry_prefix: docker.io/
 # Pi's `find` and `grep` tools need fd-find and ripgrep, and ArtiDezi runs Pi offline, so it cannot download them on its own.
 # Its Node.js needs libatomic1.
 artidezi_worker_pi_packages: [fd-find, libatomic1, ripgrep]
+
+# Claude Code comes from Anthropic's native binary releases, which need no Node.js and bundle ripgrep.
+# The npm package carries the same versions, but only downloads that binary when it is installed.
+# The role looks up the binary's checksum in the release's `manifest.json` and Docker checks it while building.
+# Its auto-updater is turned off in the image (see templates/customizations/Dockerfile.j2): the version only changes here.
+# renovate: datasource=npm depName=@anthropic-ai/claude-code versioning=semver
+artidezi_worker_claude_version: 2.1.327
+artidezi_worker_claude_release_url: "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/{{ artidezi_worker_claude_version }}"
+artidezi_worker_claude_platform: "linux-{{ {'x86_64': 'x64', 'aarch64': 'arm64'}[ansible_facts['architecture']] | default(ansible_facts['architecture']) }}"
 
 # Installs mise into the customized image (`container` mode only).
 # Tasks can use it for what a project pins in its own mise configuration:
@@ -139,6 +150,7 @@ artidezi_worker_container_image_customizations_enabled: |
     and (
       artidezi_worker_codex_enabled | bool
       or artidezi_worker_pi_enabled | bool
+      or artidezi_worker_claude_enabled | bool
       or artidezi_worker_mise_enabled | bool
       or artidezi_worker_container_image_customizations_packages_to_install | length > 0
       or artidezi_worker_container_image_customizations_dockerfile_body_custom | length > 0

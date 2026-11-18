@@ -9,7 +9,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 [![REUSE status](https://api.reuse.software/badge/github.com/mother-of-all-self-hosting/ansible-role-artidezi-worker)](https://api.reuse.software/info/github.com/mother-of-all-self-hosting/ansible-role-artidezi-worker)
 
 This is an [Ansible](https://www.ansible.com/) role which installs an [ArtiDezi](https://github.com/devture/artidezi) worker to run as a [Docker](https://www.docker.com/) container wrapped in a systemd unit, or as a plain binary under systemd.
-An ArtiDezi worker polls its orchestrator and runs a coding-agent harness (Codex or Pi) on repository checkouts.
+An ArtiDezi worker polls its orchestrator and runs a coding-agent harness (Codex, Pi or Claude Code) on repository checkouts.
 
 This role *implicitly* depends on:
 
