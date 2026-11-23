@@ -111,7 +111,7 @@ artidezi_worker_pi_packages: [fd-find, libatomic1, ripgrep]
 # The role looks up the binary's checksum in the release's `manifest.json` and Docker checks it while building.
 # Its auto-updater is turned off in the image (see templates/customizations/Dockerfile.j2): the version only changes here.
 # renovate: datasource=npm depName=@anthropic-ai/claude-code versioning=semver
-artidezi_worker_claude_version: 2.1.327
+artidezi_worker_claude_version: 2.1.329
 artidezi_worker_claude_release_url: "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/{{ artidezi_worker_claude_version }}"
 artidezi_worker_claude_platform: "linux-{{ {'x86_64': 'x64', 'aarch64': 'arm64'}[ansible_facts['architecture']] | default(ansible_facts['architecture']) }}"
 
