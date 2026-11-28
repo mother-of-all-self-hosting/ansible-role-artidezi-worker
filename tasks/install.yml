@@ -40,7 +40,7 @@
   when: item.stat.exists and not item.stat.islnk and (item.stat.uid != 0 or item.stat.mode[-2:] is search('[2367]'))
 
 # systemd refuses to start a service for an unknown user, even by uid. In a container, the role provides the user.
-- name: Fail if the ArtiDezi worker's user doesn't exist on the host
+- name: Fail if the ArtiDezi worker's user does not exist on the host
   when: artidezi_worker_mode == 'host'
   ansible.builtin.command:
     argv: [getent, passwd, "{{ artidezi_worker_uid }}"]
@@ -173,7 +173,7 @@
           ansible.builtin.fail:
             msg: "Building {{ artidezi_worker_container_image_customized }} failed: {{ ansible_failed_result.msg | default('see the task above') }}"
 
-- name: Ensure the customized container source path doesn't exist, when not customizing
+- name: Ensure the customized container source path does not exist, when not customizing
   when: not artidezi_worker_container_image_customizations_enabled | bool
   ansible.builtin.file:
     path: "{{ artidezi_worker_customized_container_src_path }}"
@@ -215,7 +215,7 @@
     msg: "uid {{ artidezi_worker_uid }} can't run {{ artidezi_worker_binary_path }}, so the worker wouldn't start. Put `artidezi_worker_base_path` somewhere this user can reach: {{ artidezi_worker_binary_check.stderr }}"
   when: artidezi_worker_mode == 'host' and not ansible_check_mode and artidezi_worker_binary_check.rc != 0
 
-- name: Ensure what only host mode uses doesn't exist, when in container mode
+- name: Ensure what only host mode uses does not exist, when in container mode
   when: artidezi_worker_mode == 'container'
   ansible.builtin.file:
     path: "{{ item }}"
